@@ -15,3 +15,7 @@ peft
 sentencepiece
 scikit-build
 Cython
+munch
+ninja
+git+https://github.com/HazyResearch/flash-attention.git#subdirectory=csrc/rotary
+git+https://github.com/HazyResearch/flash-attention.git#subdirectory=csrc/layer_norm
