@@ -19,7 +19,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, logging, replace_return_docstrings
 from transformers import LlamaConfig
 
-from fmengine.modeling._common._nn import EmbeddingPipe, LMLayerPipe
+from fmengine.modeling._common._nn import ParallelEmbeddingPipe, ParallelLMLayerPipe
 from fmengine import mpu
 
 try:
@@ -132,22 +132,38 @@ class LlamaMLP(nn.Module):
         hidden_act: str,
     ):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        # self.up_proj = mpu.ColumnParallelLinear(
-        #     args=args.deepspeed_config,
-        #     input_size=hidden_size,
-        #     output_size=intermediate_size,
-        #     gather_output=False,
-        #     init_method=nn.init.xavier_normal_,
-        #     skip_bias_add=True,
-        #     bias=False,
-        # )
+        self.gate_proj = mpu.ColumnParallelLinear(
+            args=args,
+            input_size=hidden_size,
+            output_size=intermediate_size,
+            gather_output=False,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
+            bias=False,
+        )
+        self.down_proj = mpu.RowParallelLinear(
+            args=args,
+            input_size=intermediate_size,
+            output_size=hidden_size,
+            input_is_parallel=True,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
+            parallel_output=False, # True if gpt-j-parallel
+            bias=False,
+        )
+        self.up_proj = mpu.ColumnParallelLinear(
+            args=args,
+            input_size=hidden_size,
+            output_size=intermediate_size,
+            gather_output=False,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
+            bias=False,
+        )
         self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(self.act_fn(self.gate_proj(x)[0]) * self.up_proj(x)[0])[0]
 
 
 class LlamaAttention(nn.Module):
@@ -167,24 +183,41 @@ class LlamaAttention(nn.Module):
         self.max_positions = max_positions
         self.config = config
 
-        self.q_proj = nn.Linear(
-            self.hidden_size,
-            self.num_heads * self.head_dim,
+        self.q_proj = mpu.ColumnParallelLinear(
+            args=args,
+            input_size=self.hidden_size,
+            output_size=self.num_heads * self.head_dim,
+            gather_output=False,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
             bias=False,
         )
-        self.k_proj = nn.Linear(
-            self.hidden_size,
-            self.num_kv_heads * self.head_dim,
+        self.k_proj = mpu.ColumnParallelLinear(
+            args=args,
+            input_size=self.hidden_size,
+            output_size=self.num_kv_heads * self.head_dim,
+            gather_output=False,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
             bias=False,
         )
-        self.v_proj = nn.Linear(
-            self.hidden_size,
-            self.num_kv_heads * self.head_dim,
+        self.v_proj = mpu.ColumnParallelLinear(
+            args=args,
+            input_size=self.hidden_size,
+            output_size=self.num_kv_heads * self.head_dim,
+            gather_output=False,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
             bias=False,
         )
-        self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim,
-            self.hidden_size,
+        self.o_proj = mpu.RowParallelLinear(
+            args=args,
+            input_size=self.num_heads * self.head_dim,
+            output_size=self.hidden_size,
+            input_is_parallel=True,
+            init_method=nn.init.xavier_normal_,
+            skip_bias_add=True,
+            parallel_output=False, # True if gpt-j-parallel
             bias=False,
         )
 
@@ -223,14 +256,14 @@ class LlamaAttention(nn.Module):
 
         bsz, q_len, _ = hidden_states.size()
 
-        query_states = (self.q_proj(hidden_states)).view(
-            bsz, q_len, self.num_heads, self.head_dim
+        query_states = self.q_proj(hidden_states)[0].view(
+            bsz, q_len, -1, self.head_dim
         )
-        key_states = self.k_proj(hidden_states).view(
-            bsz, q_len, self.num_kv_heads, self.head_dim
+        key_states = self.k_proj(hidden_states)[0].view(
+            bsz, q_len, -1, self.head_dim
         )
-        value_states = (self.v_proj(hidden_states)).view(
-            bsz, q_len, self.num_kv_heads, self.head_dim
+        value_states = self.v_proj(hidden_states)[0].view(
+            bsz, q_len, -1, self.head_dim
         )
 
         q = query_states
@@ -245,8 +278,8 @@ class LlamaAttention(nn.Module):
         else:
             raise Exception("Flash Attention not found.")
 
-        attn_output = attn_output.view(bsz, q_len, self.num_heads * self.head_dim)
-        attn_output = self.o_proj(attn_output)
+        attn_output = attn_output.view(bsz, q_len, -1)
+        attn_output = self.o_proj(attn_output)[0]
 
         return attn_output
                 
@@ -315,6 +348,8 @@ class ParallelTransformerLayerPipe(nn.Module):
 class CustomLlamaModelPipe(PipelineModule):
     def __init__(self, args, model_config, activation_checkpointing_config, **kwargs):
         if activation_checkpointing_config:
+            from deepspeed.runtime.activation_checkpointing.checkpointing import _CUDA_RNG_STATE_TRACKER, _MODEL_PARALLEL_RNG_TRACKER_NAME
+            _CUDA_RNG_STATE_TRACKER.add(_MODEL_PARALLEL_RNG_TRACKER_NAME, 1)
             deepspeed.checkpointing.configure(
                 mpu,
                 partition_activations=activation_checkpointing_config.get(
@@ -334,10 +369,12 @@ class CustomLlamaModelPipe(PipelineModule):
                 ),
                 profile=activation_checkpointing_config.get("profile", False),
             )
+            
         super().__init__(
             layers=[
                 LayerSpec(
-                    EmbeddingPipe,
+                    ParallelEmbeddingPipe,
+                    args,
                     model_config.vocab_size,
                     model_config.hidden_size,
                 ),
@@ -356,7 +393,8 @@ class CustomLlamaModelPipe(PipelineModule):
                     model_config.rms_norm_eps,
                 ),
                 LayerSpec(
-                    LMLayerPipe,
+                    ParallelLMLayerPipe,
+                    args,
                     model_config.hidden_size,
                     model_config.vocab_size,
                     bias=False,

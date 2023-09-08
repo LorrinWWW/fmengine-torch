@@ -105,6 +105,9 @@ if __name__=="__main__":
     torch.cuda.set_device(ds_args.local_rank)
     ds_config = read_ds_config(ds_args.deepspeed_config)
     ds_args.deepspeed_config = munchify(ds_config)
+    ds_args.use_cpu_initialization = False
+    ds_args.params_dtype = torch.bfloat16
+    ds_args.use_mup = False
     initialize_megatron(ds_args)
     
     data_args.num_workers = 2 * ds_args.world_size // ds_args.pipe_parallel_size // ds_args.model_parallel_size
@@ -160,7 +163,7 @@ if __name__=="__main__":
     )
     trainer.fit(
         steps = trainer_args.train_steps,
-        profile = True,
+        profile = ds_args.deepspeed_config.flops_profiler.enabled,
         log_per_steps = trainer_args.log_steps,
         save_per_steps = trainer_args.save_steps
     )
