@@ -12,7 +12,8 @@ from fmengine.modeling.neox.neox_model import NeoxModelPipe
 def get_model(
         model_config: PretrainedConfig, 
         args, 
-        activation_checkpointing_config=None
+        activation_checkpointing_config=None,
+        peft_config=None,
     ):
     pp = args.pipe_parallel_size
     mp = args.model_parallel_size
@@ -41,6 +42,7 @@ def get_model(
             topology=topo,
             base_seed=args.seed,
             activation_checkpointing_config=activation_checkpointing_config,
+            lora_config=peft_config,
         )
     elif isinstance(model_config, GPTNeoXConfig):
         return NeoxModelPipe(

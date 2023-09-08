@@ -15,6 +15,11 @@ peft
 sentencepiece
 scikit-build
 Cython
+scalene
+torchmetrics
+sphinx-autobuild
+myst-parser
+furo
 munch
 ninja
 git+https://github.com/HazyResearch/flash-attention.git#subdirectory=csrc/rotary

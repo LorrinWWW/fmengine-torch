@@ -2,13 +2,10 @@ import os
 import torch
 import transformers
 from pathlib import Path
-from typing import Optional, Literal
 from loguru import logger
 from transformers import AutoConfig, AutoTokenizer, LlamaForCausalLM
 from safetensors.torch import save_model
-
-
-from fmengine.modeling.llama.optimizations import (
+from fmengine.modeling.llama.flash_attention import (
     smart_tokenizer_and_embedding_resize,
 )
 from fmengine.dataloader.constants import (
@@ -21,7 +18,6 @@ from fmengine.dataloader.constants import (
 def write_ckpt(outpath: Path, model: torch.nn.Module, model_config: transformers.AutoConfig, mp: int):
     loaded = model.state_dict()
     n_layers = model_config.num_hidden_layers
-
     if mp == 1:
         # embedding
         sd = {"weight": loaded['model.embed_tokens.weight']}
@@ -62,7 +58,6 @@ def write_ckpt(outpath: Path, model: torch.nn.Module, model_config: transformers
                         dim = p.size(1) // mp
                         sd[n] = p[:, i_mp*dim: (i_mp+1)*dim]
                 torch.save(sd, os.path.join(outpath, f"layer_{layer_i+1:02d}-model_{i_mp:02d}-model_states.pt"))
-            
     
     model_state = {
         "dp_world_size": 1,
@@ -73,6 +68,7 @@ def write_ckpt(outpath: Path, model: torch.nn.Module, model_config: transformers
         "skipped_steps": 1,
         "iteration": 1,
     }
+    
     for rank in range(mp):
         torch.save(model_state, os.path.join(outpath, f"mp_rank_{rank:02d}_model_states.pt"))
 
