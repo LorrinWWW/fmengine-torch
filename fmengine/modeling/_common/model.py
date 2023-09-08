@@ -6,6 +6,7 @@ from deepspeed.runtime.pipe.topology import PipeModelDataParallelTopology
 
 from fmengine.optimizers.loss_func import cross_entropy_fn
 from fmengine.modeling.llama.llama_model import LlamaModelPipe
+from fmengine.modeling.llama.custom_llama_model import CustomLlamaModelPipe
 from fmengine.modeling.neox.neox_model import NeoxModelPipe
 
 def get_model(
@@ -24,7 +25,17 @@ def get_model(
     stage_id = topo.get_coord(rank=torch.distributed.get_rank()).pipe
     if 0 < stage_id < topo.get_dim("pipe") - 1:
         args.seed = args.seed + (stage_id * mp)
-    if isinstance(model_config, LlamaConfig):
+    print(args.use_custom_llama)
+    if isinstance(model_config, LlamaConfig) and getattr(args, 'use_custom_llama', False):
+        return CustomLlamaModelPipe(
+            args,
+            model_config,
+            loss_fn=cross_entropy_fn,
+            topology=topo,
+            base_seed=args.seed,
+            activation_checkpointing_config=activation_checkpointing_config,
+        )
+    elif isinstance(model_config, LlamaConfig):
         return LlamaModelPipe(
             model_config,
             loss_fn=cross_entropy_fn,

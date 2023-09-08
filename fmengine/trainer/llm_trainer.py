@@ -74,7 +74,7 @@ class LLMTrainer:
                     avg_time = (now-start) / log_per_steps
                     logger_rank0.info(f"Step={step:>6}, loss={loss.item():.4f}, {avg_time:.2f} s/it")
                     start = now
-                if step == profile_step:
+                if profile and step == profile_step:
                     prof.stop_profile()
                     prof.print_model_profile(profile_step=profile_step)
                     prof.end_profile()
