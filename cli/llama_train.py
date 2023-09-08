@@ -1,3 +1,7 @@
+import sys, os
+# sys.path.append(os.path.join(os.path.dirname(sys.path[0]),'../'))
+sys.path.append(os.path.dirname(sys.path[0]))
+
 import torch
 import random
 import deepspeed
@@ -10,7 +14,6 @@ from fmengine.utils import jload
 from fmengine.trainer.llm_trainer import LLMTrainer
 from fmengine.modeling._common.model import get_model
 from fmengine.dataloader.jsonl_loader import get_jsonl_dataloader
-from fmengine.modeling.llama.optimizations import replace_llama_attn_with_flash_attn
 from fmengine import mpu
 from fmengine.mpu import set_model_parallel_rank, set_model_parallel_world_size
 
@@ -120,10 +123,6 @@ if __name__=="__main__":
     np.random.seed(ds_args.seed)
     torch.manual_seed(ds_args.seed)
     deepspeed.runtime.utils.set_random_seed(ds_args.seed)
-
-    if model_args.use_flash_attn:
-        print("⚡⚡⚡ enable flash attention.")
-        replace_llama_attn_with_flash_attn()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.init_ckpt,

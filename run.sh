@@ -1,6 +1,6 @@
 
 ##### PP
-# deepspeed --num_gpus 8 --num_nodes 1 llama-starter.py \
+# deepspeed --num_gpus 8 --num_nodes 1 cli/llama_train.py \
 #     --output_dir cache/models \
 #     --init_ckpt /home/jue/v2/llama2-7b-shard \
 #     --data_path /home/jue/v1/fmengine-torch/data/llama-instruct/llama-instruct-19K.jsonl \
@@ -16,7 +16,7 @@
 #     --deepspeed_config ./configs/llama.json
 
 ##### TP
-deepspeed --num_gpus 8 --num_nodes 1 llama-starter.py \
+deepspeed --num_gpus 8 --num_nodes 1 cli/llama_train.py \
     --output_dir cache/models \
     --init_ckpt /home/jue/v2/llama2-7b-mp2 \
     --data_path /home/jue/v1/fmengine-torch/data/llama-instruct/llama-instruct-19K.jsonl \
