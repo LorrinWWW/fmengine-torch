@@ -66,10 +66,12 @@ class JSONLDataset(IterableDataset):
                  data,
                  tokenizer: Tokenizer,
                  seq_length: int, 
-                 doc_sep='\n'
+                 doc_sep=''
                 ) -> None:
         self.data = data
         self.tokenizer = tokenizer
+        self.tokenizer.add_bos_token = True
+        self.tokenizer.add_eos_token = True
         self.seq_length = seq_length + 1 # additional 1 for shifting
         self.doc_sep = doc_sep
         self.field = 'text'
@@ -147,7 +149,7 @@ def get_jsonl_dataloader(
         batch_size = batch_size * data_group_size,
         shuffle = shuffle,
         num_workers = num_workers,
-        pin_memory = True,
+        pin_memory = False,
         collate_fn = collator
     )
     return iter(deepspeed.utils.RepeatingLoader(train_data_loader))
