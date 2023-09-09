@@ -301,13 +301,13 @@ class ParallelTransformerLayerPipe(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-        def attn_res(hidden_states: torch.Tensor, attention_mask=None) -> torch.Tensor:
+        def attn_res(hidden_states: torch.Tensor) -> torch.Tensor:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
             # Self Attention
             hidden_states = self.self_attn(
                 hidden_states=hidden_states,
-                attention_mask=attention_mask,
+                attention_mask=None,
             )
             hidden_states = residual + hidden_states
             return hidden_states
@@ -332,7 +332,7 @@ class ParallelTransformerLayerPipe(nn.Module):
 
         if self.activation_checkpointing:
             x.requires_grad_(True)
-            x = deepspeed.checkpointing.checkpoint(self.attn_res, x, attention_mask)
+            x = deepspeed.checkpointing.checkpoint(self.attn_res, x)
         else:
             x = self.attn_res(x, attention_mask)
 

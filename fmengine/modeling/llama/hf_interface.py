@@ -36,27 +36,30 @@ def write_ckpt(outpath: Path, model: torch.nn.Module, model_config: transformers
         # embedding
         for i_mp in range(mp):
             vocab_size = loaded['model.embed_tokens.weight'].size(0) // mp
-            sd = {"weight": loaded['model.embed_tokens.weight'][i_mp*vocab_size: (i_mp+1)*vocab_size]}
+            sd = {"weight": loaded['model.embed_tokens.weight'][i_mp*vocab_size: (i_mp+1)*vocab_size].clone()}
             torch.save(sd, os.path.join(outpath,  f"layer_00-model_{i_mp:02d}-model_states.pt"))
 
             sd = {"weight": loaded['model.norm.weight']}
             torch.save(sd, os.path.join(outpath, f"layer_{n_layers+1:02d}-model_{i_mp:02d}-model_states.pt"))
 
             assert loaded['lm_head.weight'].size(0)  // mp == vocab_size
-            sd = {"weight": loaded['lm_head.weight'][i_mp*vocab_size: (i_mp+1)*vocab_size]}
+            sd = {"weight": loaded['lm_head.weight'][i_mp*vocab_size: (i_mp+1)*vocab_size].clone()}
             torch.save(sd, os.path.join(outpath,  f"layer_{n_layers+2:02d}-model_{i_mp:02d}-model_states.pt"))
 
             for layer_i in range(n_layers):
+
+                original_sd = {nm.replace(f"model.layers.{layer_i}.", f""): weight for nm, weight in loaded.items() if nm.startswith(f"model.layers.{layer_i}.")}
                 sd = {nm.replace(f"model.layers.{layer_i}.", f""): weight for nm, weight in loaded.items() if nm.startswith(f"model.layers.{layer_i}.")}
+                
                 for n, p in sd.items():
                     if 'gate_proj' in n or 'up_proj' in n \
                       or 'q_proj' in n or 'k_proj' in n or 'v_proj' in n:
                         dim = p.size(0) // mp
-                        sd[n] = p[i_mp*dim: (i_mp+1)*dim]
-
+                        sd[n] = p[i_mp*dim: (i_mp+1)*dim].clone()
                     elif 'down_proj' in n or 'o_proj' in n:
                         dim = p.size(1) // mp
-                        sd[n] = p[:, i_mp*dim: (i_mp+1)*dim]
+                        sd[n] = p[:, i_mp*dim: (i_mp+1)*dim].clone()
+                        
                 torch.save(sd, os.path.join(outpath, f"layer_{layer_i+1:02d}-model_{i_mp:02d}-model_states.pt"))
     
     model_state = {
@@ -76,6 +79,7 @@ def write_ckpt(outpath: Path, model: torch.nn.Module, model_config: transformers
 def from_hf(model_name_or_path: str, outdir: str, mp_size:int):
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_name_or_path)
     model_config = transformers.AutoConfig.from_pretrained(model_name_or_path)
+    torch.nn.Linear.reset_parameters = lambda x: None
     model = transformers.AutoModelForCausalLM.from_pretrained(model_name_or_path)
     if tokenizer.pad_token is None:
         smart_tokenizer_and_embedding_resize(

@@ -25,7 +25,6 @@ def get_model(
     stage_id = topo.get_coord(rank=torch.distributed.get_rank()).pipe
     if 0 < stage_id < topo.get_dim("pipe") - 1:
         args.seed = args.seed + (stage_id * mp)
-    print(args.use_custom_llama)
     if isinstance(model_config, LlamaConfig) and getattr(args, 'use_custom_llama', False):
         return CustomLlamaModelPipe(
             args,
