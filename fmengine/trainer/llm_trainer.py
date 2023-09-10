@@ -18,6 +18,7 @@ class LLMTrainer:
         init_ckpt: str = None,
         save_dir: str = None,
         pretrain:bool = False,
+        load_module_strict: bool = True,
     ) -> None:
         self.ds_args = ds_args
         self.model = model
@@ -27,6 +28,8 @@ class LLMTrainer:
         self.ds_config = ds_config
         self.config = self.ds_config
         self.pretrain = pretrain
+        self.load_module_strict = load_module_strict
+        
     def fit(
         self,
         steps: int,
@@ -51,7 +54,8 @@ class LLMTrainer:
             engine.load_checkpoint(
                 self.init_ckpt,
                 load_module_only=True,
-                load_optimizer_states=False
+                load_optimizer_states=False,
+                load_module_strict=self.load_module_strict,
             )
         engine.optimizer.refresh_fp32_params()
         if profile:

@@ -4,6 +4,7 @@ sys.path.append(os.path.dirname(sys.path[0]))
 
 import torch
 import random
+import math
 import deepspeed
 import numpy as np
 import transformers
@@ -108,6 +109,7 @@ if __name__=="__main__":
     torch.cuda.set_device(ds_args.local_rank)
     ds_config = read_ds_config(ds_args.deepspeed_config)
     ds_args.deepspeed_config = munchify(ds_config)
+    print(ds_args.deepspeed_config)
     ds_args.use_cpu_initialization = False
     ds_args.params_dtype = torch.bfloat16
     ds_args.use_mup = False
@@ -151,7 +153,8 @@ if __name__=="__main__":
     )
     model = model.bfloat16()
     for n, p in model.named_parameters():
-        if 'norm' in n.lower():
+        if 'lora' in n.lower():
+            print(n)
             p.requires_grad_(True)
         else:
             p.requires_grad_(False)
@@ -165,6 +168,7 @@ if __name__=="__main__":
         ds_config = ds_config,
         init_ckpt = model_args.init_ckpt,
         save_dir=trainer_args.output_dir,
+        load_module_strict=False,
     )
     trainer.fit(
         steps = trainer_args.train_steps,
