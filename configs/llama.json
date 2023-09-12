@@ -16,7 +16,7 @@
         "grad_accum_dtype": "fp32" 
     },
     "zero_optimization": {
-        "stage": 1,
+        "stage": 3,
         "allgather_partitions": true,
         "allgather_bucket_size": 5e8,
         "overlap_comm": true,
@@ -45,7 +45,7 @@
     },
     "min_lr": 5e-7,
     "activation_checkpointing": {
-        "partition_activations": false,
+        "partition_activations": true,
         "cpu_checkpointing": false,
         "contiguous_memory_optimization": false,
         "number_checkpoints": null,

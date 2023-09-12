@@ -150,6 +150,7 @@ if __name__=="__main__":
         activation_checkpointing_config
     )
     torch.nn.Linear.reset_parameters = _tmp
+    model = model.bfloat16()
     
     ds_config['data_path'] = data_args.data_path
     trainer = LLMTrainer(
