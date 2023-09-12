@@ -1,5 +1,5 @@
 {
-    "train_micro_batch_size_per_gpu": 8,
+    "train_micro_batch_size_per_gpu": 1,
     "gradient_accumulation_steps": 4,
     "steps_per_print": 1,
     "gradient_clipping": 1.0,
@@ -16,7 +16,7 @@
         "grad_accum_dtype": "fp32" 
     },
     "zero_optimization": {
-        "stage": 0,
+        "stage": 1,
         "allgather_partitions": true,
         "allgather_bucket_size": 5e8,
         "overlap_comm": true,
