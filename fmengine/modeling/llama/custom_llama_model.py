@@ -197,7 +197,7 @@ class LoRARowParallelLinear(mpu.ColumnParallelLinear):
         """Merges the LoRA weights into the full-rank weights (W = W + delta_W)."""
         if self.r > 0 and not self.merged:
             # Merge the weights and mark it
-            self.weight.data += (self.lora_B.weight @ self.lora_A) * self.scaling
+            self.weight.data += (self.lora_B @ self.lora_A) * self.scaling
             self.merged = True
 
     def forward(self, x: torch.Tensor):
@@ -214,7 +214,8 @@ class LoRARowParallelLinear(mpu.ColumnParallelLinear):
         # x = self.lora_B(x)[0]
         x = F.linear(x, self.lora_A)
         x = F.linear(x, self.lora_B)
-        x = x * self.scaling
+        if self.scaling != 1:
+            x = x * self.scaling
         return (pretrained + x,)
 
 
