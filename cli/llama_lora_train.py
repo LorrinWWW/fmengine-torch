@@ -109,7 +109,7 @@ if __name__=="__main__":
     torch.cuda.set_device(ds_args.local_rank)
     ds_config = read_ds_config(ds_args.deepspeed_config)
     ds_args.deepspeed_config = munchify(ds_config)
-    print(ds_args.deepspeed_config)
+    # print(ds_args.deepspeed_config)
     ds_args.use_cpu_initialization = False
     ds_args.params_dtype = torch.bfloat16
     ds_args.use_mup = False
@@ -121,10 +121,11 @@ if __name__=="__main__":
 
     activation_checkpointing_config = ds_config.pop("activation_checkpointing", None)
 
-    random.seed(ds_args.seed)
-    np.random.seed(ds_args.seed)
-    torch.manual_seed(ds_args.seed)
-    deepspeed.runtime.utils.set_random_seed(ds_args.seed)
+    # lora should be different across different MP nodes
+    random.seed(ds_args.seed + mpu.get_model_parallel_rank() * 41)
+    np.random.seed(ds_args.seed + mpu.get_model_parallel_rank() * 41)
+    torch.manual_seed(ds_args.seed + mpu.get_model_parallel_rank() * 41)
+    deepspeed.runtime.utils.set_random_seed(ds_args.seed + mpu.get_model_parallel_rank() * 41)
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.init_ckpt,
@@ -135,17 +136,8 @@ if __name__=="__main__":
     tokenizer.pad_token = tokenizer.eos_token
     model_config = transformers.AutoConfig.from_pretrained(model_args.init_ckpt)
 
-    train_dataloader = get_jsonl_dataloader(
-        data_args.data_path,
-        tokenizer = tokenizer,
-        args = {
-            'seq_length': trainer_args.max_seq_len,
-            'batch_size': data_args.batch_size
-        }
-    )
-
-    _tmp = torch.nn.Linear.reset_parameters
-    torch.nn.Linear.reset_parameters = lambda x: None
+    # _tmp = torch.nn.Linear.reset_parameters
+    # torch.nn.Linear.reset_parameters = lambda x: None
     model = get_model(
         model_config,
         ds_args,
@@ -154,11 +146,26 @@ if __name__=="__main__":
     model = model.bfloat16()
     for n, p in model.named_parameters():
         if 'lora' in n.lower():
-            print(n)
             p.requires_grad_(True)
         else:
             p.requires_grad_(False)
-    torch.nn.Linear.reset_parameters = _tmp
+    # torch.nn.Linear.reset_parameters = _tmp
+
+    # set back
+    random.seed(ds_args.seed)
+    np.random.seed(ds_args.seed)
+    torch.manual_seed(ds_args.seed)
+    deepspeed.runtime.utils.set_random_seed(ds_args.seed)
+
+    train_dataloader = get_jsonl_dataloader(
+        data_args.data_path,
+        tokenizer = tokenizer,
+        args = {
+            'seq_length': trainer_args.max_seq_len,
+            'batch_size': data_args.batch_size,
+            # 'seed': ds_args.seed,
+        }
+    )
     
     ds_config['data_path'] = data_args.data_path
     trainer = LLMTrainer(

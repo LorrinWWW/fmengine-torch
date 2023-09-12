@@ -31,15 +31,30 @@
 #     --use_custom_llama true \
 #     --deepspeed_config ./configs/llama.json
 
+# deepspeed --num_gpus 8 --num_nodes 1 cli/llama_lora_train.py \
+#     --output_dir /home/jue/v2/model_ckpts/lora_delay \
+#     --init_ckpt /home/jue/v2/codellama-34b-mp4 \
+#     --data_path /home/jue/v1/fmengine-torch/data/llama-instruct/llama-instruct-19K.jsonl \
+#     --max_seq_len 4096 \
+#     --train_steps 1000 \
+#     --eval_steps 200 \
+#     --save_steps 200 \
+#     --log_steps 1 \
+#     --pipe_parallel_size 1 \
+#     --model_parallel_size 4 \
+#     --use_flash_attn true \
+#     --use_custom_llama true \
+#     --deepspeed_config ./configs/llama-lora.json
+
 
 deepspeed --num_gpus 8 --num_nodes 1 cli/llama_lora_train.py \
-    --output_dir /home/jue/v2/model_ckpts \
-    --init_ckpt /home/jue/v2/codellama-34b-mp4 \
+    --output_dir /home/jue/v2/model_ckpts/lora_delay2 \
+    --init_ckpt /home/jue/v2/model_ckpts/lora_delay \
     --data_path /home/jue/v1/fmengine-torch/data/llama-instruct/llama-instruct-19K.jsonl \
     --max_seq_len 4096 \
     --train_steps 1000 \
-    --eval_steps 100 \
-    --save_steps 100 \
+    --eval_steps 200 \
+    --save_steps 200 \
     --log_steps 1 \
     --pipe_parallel_size 1 \
     --model_parallel_size 4 \

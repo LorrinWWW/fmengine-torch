@@ -5,6 +5,7 @@ from deepspeed.pipe import PipelineModule, LayerSpec
 
 import os
 from typing import List, Optional, Tuple, Union
+from functools import partial
 
 import torch
 import torch.utils.checkpoint
@@ -143,7 +144,6 @@ class LoRARowParallelLinear(mpu.ColumnParallelLinear):
         lora_dropout: float = 0.0,
         **kwargs,
     ):
-        print('LORALORA')
         super().__init__(
             args=args,
             input_size=input_size,
@@ -169,22 +169,35 @@ class LoRARowParallelLinear(mpu.ColumnParallelLinear):
         if r > 0:
             self.lora_A = nn.Parameter(self.weight.new_zeros((r, self.weight.size(1))))
             self.lora_B = nn.Parameter(self.weight.new_zeros((self.weight.size(0)), r))
-            self.scaling = self.lora_alpha / self.r
-            self.reset_parameters()
 
-    def reset_parameters(self):
-        """Reset all the weights, even including pretrained ones."""
-        if hasattr(self, "lora_A"):
-            # initialize A the same way as the default for nn.Linear and B to zero
-            # Wondering why 'a' is equal to math.sqrt(5)?: https://github.com/pytorch/pytorch/issues/15314
+            # self.lora_A = mpu.ColumnParallelLinear(
+            #     args=args,
+            #     input_size=input_size,
+            #     output_size=r,
+            #     gather_output=False,
+            #     skip_bias_add=True,
+            #     bias=False,
+            # )
+            # self.lora_B = mpu.RowParallelLinear(
+            #     args=args,
+            #     input_size=r,
+            #     output_size=output_size,
+            #     input_is_parallel=True,
+            #     skip_bias_add=True,
+            #     parallel_output=True,
+            #     bias=False,
+            # )
+            
+            self.scaling = self.lora_alpha / self.r
+
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-            nn.init.zeros_(self.lora_B)
+            self.lora_B.data[:] = 0
 
     def merge(self):
         """Merges the LoRA weights into the full-rank weights (W = W + delta_W)."""
         if self.r > 0 and not self.merged:
             # Merge the weights and mark it
-            self.linear.weight.data += (self.lora_B @ self.lora_A) * self.scaling
+            self.weight.data += (self.lora_B.weight @ self.lora_A) * self.scaling
             self.merged = True
 
     def forward(self, x: torch.Tensor):
@@ -197,6 +210,8 @@ class LoRARowParallelLinear(mpu.ColumnParallelLinear):
         #     self.lora_dropout(x) @ self.lora_A.transpose(0, 1) @ self.lora_B.transpose(0, 1)
         # ) * self.scaling
         x = self.lora_dropout(x)
+        # x = self.lora_A(x)[0]
+        # x = self.lora_B(x)[0]
         x = F.linear(x, self.lora_A)
         x = F.linear(x, self.lora_B)
         x = x * self.scaling
@@ -210,6 +225,7 @@ class LlamaMLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         hidden_act: str,
+        no_reduce=False,
     ):
         super().__init__()
         self.gate_proj = mpu.ColumnParallelLinear(
@@ -228,7 +244,7 @@ class LlamaMLP(nn.Module):
             input_is_parallel=True,
             init_method=nn.init.xavier_normal_,
             skip_bias_add=True,
-            parallel_output=False, # True if gpt-j-parallel
+            parallel_output=no_reduce, # True if gpt-j-parallel
             bias=False,
         )
         self.up_proj = mpu.ColumnParallelLinear(
@@ -253,6 +269,7 @@ class LlamaAttention(nn.Module):
         self,
         args,
         config,
+        no_reduce=False,
     ):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -263,7 +280,6 @@ class LlamaAttention(nn.Module):
         self.max_positions = max_positions
         self.config = config
 
-        print(args.deepspeed_config.lora)
         if hasattr(args.deepspeed_config, 'lora'):
             self.q_proj = LoRARowParallelLinear(
                 args=args,
@@ -326,7 +342,7 @@ class LlamaAttention(nn.Module):
             input_is_parallel=True,
             init_method=nn.init.xavier_normal_,
             skip_bias_add=True,
-            parallel_output=False, # True if gpt-j-parallel
+            parallel_output=no_reduce, # True if gpt-j-parallel
             bias=False,
         )
 
@@ -346,8 +362,9 @@ class LlamaAttention(nn.Module):
             scaling_type = self.config.rope_scaling["type"]
             scaling_factor = self.config.rope_scaling["factor"]
             assert scaling_type == "linear"
-        
-        print(f"Linearly scaling {scaling_factor}x.")
+
+        if scaling_factor != 1:
+            print(f"Linearly scaling {scaling_factor}x.")
         
         self.rotary_emb = RotaryEmbedding(
             self.rotary_ndims,
@@ -393,43 +410,140 @@ class LlamaAttention(nn.Module):
         return attn_output
                 
 
+# class ParallelTransformerLayerPipe(nn.Module):
+#     def __init__(self, args, config: LlamaConfig, activation_checkpointing=False, layer_id=0):
+#         super().__init__()
+#         self.activation_checkpointing = activation_checkpointing
+#         self.hidden_size = config.hidden_size
+#         self.self_attn = LlamaAttention(args=args, config=config)
+#         self.mlp = LlamaMLP(
+#             args=args,
+#             hidden_size=self.hidden_size,
+#             intermediate_size=config.intermediate_size,
+#             hidden_act=config.hidden_act,
+#         )
+#         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+#         self.post_attention_layernorm = RMSNorm(
+#             config.hidden_size, eps=config.rms_norm_eps
+#         )
+#         self.reduce = mpu.mappings.reduce_from_model_parallel_region
+
+#         def attn_res(hidden_states: torch.Tensor) -> torch.Tensor:
+#             residual = hidden_states
+#             hidden_states = self.input_layernorm(hidden_states)
+#             # Self Attention
+#             hidden_states = self.self_attn(
+#                 hidden_states=hidden_states,
+#                 attention_mask=None,
+#             )
+#             hidden_states = residual + hidden_states
+#             return hidden_states
+
+#         self.attn_res = attn_res
+
+#         def mlp_res(hidden_states: torch.Tensor) -> torch.Tensor:
+#             # Fully Connected
+#             residual = hidden_states
+#             hidden_states = self.post_attention_layernorm(hidden_states)
+#             hidden_states = self.mlp(hidden_states)
+#             hidden_states = residual + hidden_states
+#             return hidden_states
+
+#         self.mlp_res = mlp_res
+        
+
+#     def forward(self, fw_args):
+
+#         x, position_ids, mask = fw_args
+#         attention_mask = None
+
+#         if self.activation_checkpointing:
+#             x.requires_grad_(True)
+#             x = deepspeed.checkpointing.checkpoint(self.attn_res, x)
+#         else:
+#             x = self.attn_res(x, attention_mask)
+
+#         if self.activation_checkpointing:
+#             x.requires_grad_(True)
+#             x = deepspeed.checkpointing.checkpoint(self.mlp_res, x)
+#         else:
+#             x = self.mlp_res(x)
+
+#         return (x, position_ids, mask)
+
+
 class ParallelTransformerLayerPipe(nn.Module):
-    def __init__(self, args, config: LlamaConfig, activation_checkpointing=False):
+    def __init__(self, args, config: LlamaConfig, activation_checkpointing=False, layer_id=0):
         super().__init__()
+        self.num_hidden_layers = config.num_hidden_layers
+        self.layer_id = layer_id
         self.activation_checkpointing = activation_checkpointing
         self.hidden_size = config.hidden_size
-        self.self_attn = LlamaAttention(args=args, config=config)
+        self.self_attn = LlamaAttention(
+            args=args, config=config,
+            no_reduce=True,
+        )
         self.mlp = LlamaMLP(
             args=args,
             hidden_size=self.hidden_size,
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
+            no_reduce=True,
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
+        self.reduce = mpu.mappings.reduce_from_model_parallel_region
 
-        def attn_res(hidden_states: torch.Tensor) -> torch.Tensor:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-            # Self Attention
-            hidden_states = self.self_attn(
-                hidden_states=hidden_states,
-                attention_mask=None,
-            )
-            hidden_states = residual + hidden_states
-            return hidden_states
+        # torch.distributed.barrier()
+        # if self.layer_id == 0 and mpu.get_model_parallel_rank() in [0, 1]:
+            # print(self.layer_id, args.local_rank, self.self_attn.q_proj.lora_A.weight, self.self_attn.q_proj.weight.shape)
+
+        def attn_res(residual: torch.Tensor, hidden_states: torch.Tensor = None) -> torch.Tensor:
+
+            if self.layer_id == 0:
+                x0 = residual
+                x1a = self.input_layernorm(x0)
+                # Self Attention
+                x1a = self.self_attn(
+                    hidden_states=x1a,
+                    attention_mask=None,
+                )
+                return x0, x1a
+            else:
+                x0 = residual
+                x1a = hidden_states
+                x2a = self.input_layernorm(x0 + x1a)
+                # Self Attention
+                x2a = self.self_attn(
+                    hidden_states=x2a,
+                    attention_mask=None,
+                )
+                x1 = x0 + self.reduce(x1a)
+                
+                return x1, x2a
 
         self.attn_res = attn_res
 
-        def mlp_res(hidden_states: torch.Tensor) -> torch.Tensor:
-            # Fully Connected
-            residual = hidden_states
-            hidden_states = self.post_attention_layernorm(hidden_states)
-            hidden_states = self.mlp(hidden_states)
-            hidden_states = residual + hidden_states
-            return hidden_states
+        def mlp_res(residual: torch.Tensor, hidden_states: torch.Tensor = None) -> torch.Tensor:
+            
+            if self.layer_id != self.num_hidden_layers - 1:
+                # Fully Connected
+                x0 = residual
+                x1a = hidden_states
+                x2a = self.post_attention_layernorm(x0 + x1a)
+                x2a = self.mlp(x2a)
+                x1 = x0 + self.reduce(x1a)
+                return x1, x2a
+            else:
+                # Fully Connected
+                x0 = residual
+                x1a = hidden_states
+                x2a = self.post_attention_layernorm(x0 + x1a)
+                x2a = self.mlp(x2a)
+                x2 = x0 + self.reduce(x1a + x2a)
+                return x2, None 
 
         self.mlp_res = mlp_res
         
@@ -439,19 +553,31 @@ class ParallelTransformerLayerPipe(nn.Module):
         x, position_ids, mask = fw_args
         attention_mask = None
 
-        if self.activation_checkpointing:
-            x.requires_grad_(True)
-            x = deepspeed.checkpointing.checkpoint(self.attn_res, x)
+        if self.layer_id == 0:
+            res, x = x, None
+            res.requires_grad_(True)
         else:
-            x = self.attn_res(x, attention_mask)
+            res, x = x
+            x.requires_grad_(True)
+            res.requires_grad_(True)
 
         if self.activation_checkpointing:
-            x.requires_grad_(True)
-            x = deepspeed.checkpointing.checkpoint(self.mlp_res, x)
+            res, x = deepspeed.checkpointing.checkpoint(self.attn_res, res, x)
         else:
-            x = self.mlp_res(x)
+            res, x = self.attn_res(res, x)
 
-        return (x, position_ids, mask)
+        x.requires_grad_(True)
+        res.requires_grad_(True)
+
+        if self.activation_checkpointing:
+            res, x = deepspeed.checkpointing.checkpoint(self.mlp_res, res, x)
+        else:
+            res, x = self.mlp_res(res, x)
+
+        if self.layer_id != self.num_hidden_layers - 1:
+            return ((res, x), position_ids, mask)
+        else:
+            return (res, position_ids, mask)
 
 
 class CustomLlamaModelPipe(PipelineModule):
@@ -493,8 +619,9 @@ class CustomLlamaModelPipe(PipelineModule):
                         args,
                         model_config,
                         activation_checkpointing_config is not None,
+                        layer_id=layer_id,
                     )
-                    for _ in range(model_config.num_hidden_layers)
+                    for layer_id in range(model_config.num_hidden_layers)
                 ],
                 LayerSpec(
                     LastRMSNorm,

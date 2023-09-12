@@ -1,6 +1,6 @@
 {
-    "train_micro_batch_size_per_gpu": 8,
-    "gradient_accumulation_steps": 4,
+    "train_micro_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 32,
     "steps_per_print": 1,
     "gradient_clipping": 1.0,
     "lr-decay-style": "cosine",
@@ -27,25 +27,25 @@
     "optimizer": {
         "type": "Adam",
         "params": {
-            "lr": 1e-2,
+            "lr": 1e-6,
             "betas": [
                 0.9,
-                0.99
+                0.999
             ],
-            "eps": 1.0e-4
+            "eps": 1.0e-6
         }
     },
     "scheduler": {
         "type": "WarmupLR",
         "params": {
-            "warmup_min_lr": 1e-4,
-            "warmup_max_lr": 1e-2,
+            "warmup_min_lr": 1e-6,
+            "warmup_max_lr": 1e-5,
             "warmup_num_steps": 10
         }
     },
-    "min_lr": 1e-4,
+    "min_lr": 1e-6,
     "activation_checkpointing": {
-        "partition_activations": true,
+        "partition_activations": false,
         "cpu_checkpointing": false,
         "contiguous_memory_optimization": false,
         "number_checkpoints": null,
@@ -63,7 +63,7 @@
     },
     "lora": {
         "r": 8,
-        "lora_alpha": 1,
+        "lora_alpha": 8,
         "lora_dropout": 0.0
     }
 }
